@@ -5,16 +5,22 @@ project(KDPart)
 find_package(MPI REQUIRED)
 include_directories(SYSTEM ${MPI_INCLUDE_PATH})
 
+# Include C++ file(s)
+file(GLOB SOURCES
+  util/*.cc
+)
+
 # Build shared and static library
 add_library(kdpart SHARED kdpart.cc)
-target_link_libraries(kdpart ${MPI_LIBRARIES})
+target_link_libraries(kdpart ${MPI_LIBRARIES} ${SOURCES})
+
 add_library(kdpart_static STATIC kdpart.cc)
-target_link_libraries(kdpart_static ${MPI_LIBRARIES})
+target_link_libraries(kdpart_static ${MPI_LIBRARIES} ${SOURCES})
 set_target_properties(kdpart_static PROPERTIES OUTPUT_NAME kdpart)
 
 # Build test executable
 add_executable(kdpart_test_par kdpart_test_par.cc)
-target_link_libraries(kdpart_test_par kdpart)
+target_link_libraries(kdpart_test_par kdpart_static)
 
 # Tests
 enable_testing()
