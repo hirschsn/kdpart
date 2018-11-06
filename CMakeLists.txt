@@ -10,15 +10,16 @@ file(GLOB SOURCES
   util/*.cc
 )
 
-# Build shared and static library
+# Build shared library
 add_library(kdpart SHARED kdpart.cc)
 target_link_libraries(kdpart ${MPI_LIBRARIES} ${SOURCES})
 
+# Build static library
 add_library(kdpart_static STATIC kdpart.cc)
 target_link_libraries(kdpart_static ${MPI_LIBRARIES} ${SOURCES})
 set_target_properties(kdpart_static PROPERTIES OUTPUT_NAME kdpart)
 
-# Build test executable
+# Build test
 add_executable(kdpart_test_par kdpart_test_par.cc)
 target_link_libraries(kdpart_test_par kdpart_static)
 
