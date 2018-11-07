@@ -6,6 +6,10 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release")
 endif()
 
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
 # Include MPI
 find_package(MPI REQUIRED)
 include_directories(SYSTEM ${MPI_INCLUDE_PATH})
@@ -30,7 +34,7 @@ target_link_libraries(kdpart_test_par kdpart_static)
 
 # Tests
 enable_testing()
-add_test(TestKDPart kdpart_test_par)
+add_test(TestKDPart ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/kdpart_test_par)
 
 # Install
 install(TARGETS kdpart DESTINATION lib)
