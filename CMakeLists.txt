@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.0)
 project(KDPart)
 
+# Default build type
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release")
+endif()
+
 # Include MPI
 find_package(MPI REQUIRED)
 include_directories(SYSTEM ${MPI_INCLUDE_PATH})
