@@ -15,17 +15,17 @@ find_package(MPI REQUIRED)
 include_directories(SYSTEM ${MPI_INCLUDE_PATH})
 
 # Include C++ file(s)
-file(GLOB SOURCES
+file(GLOB UTIL_SOURCES
   util/*.cc
 )
 
 # Build shared library
-add_library(kdpart SHARED kdpart.cc)
-target_link_libraries(kdpart ${MPI_LIBRARIES} ${SOURCES})
+add_library(kdpart SHARED kdpart.cc ${UTIL_SOURCES})
+target_link_libraries(kdpart ${MPI_LIBRARIES})
 
 # Build static library
-add_library(kdpart_static STATIC kdpart.cc)
-target_link_libraries(kdpart_static ${MPI_LIBRARIES} ${SOURCES})
+add_library(kdpart_static STATIC kdpart.cc ${UTIL_SOURCES})
+target_link_libraries(kdpart_static ${MPI_LIBRARIES})
 set_target_properties(kdpart_static PROPERTIES OUTPUT_NAME kdpart)
 
 # Build test
