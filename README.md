@@ -70,9 +70,6 @@ lu = n.lu();
 ro = n.ro();
 ```
 
-*Be careful*: Currently, all code is implemented in headers only.
-Include it at most in one single in your whole project.
-
 ## License
 
 See `LICENSE` file (MIT/Expat license).
