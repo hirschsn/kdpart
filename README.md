@@ -70,12 +70,8 @@ lu = n.lu();
 ro = n.ro();
 ```
 
-*Be careful*: Currenlty, all code is implemented in headers only.
+*Be careful*: Currently, all code is implemented in headers only.
 Include it at most in one single in your whole project.
-
-## TODO
-
- - Needs reasonable structuring into implementation and header
 
 ## License
 
