@@ -7,6 +7,8 @@
 
 #include <stdexcept>
 #include <mpi.h>
+#include <vector>
+#include <limits>
 
 namespace kdpart {
 namespace util {
@@ -18,8 +20,6 @@ template <>
 struct mpi_type<double> {
     static MPI_Datatype value;
 };
-
-MPI_Datatype mpi_type<double>::value = MPI_DOUBLE;
 
 /** Allgather wrapper.
  */

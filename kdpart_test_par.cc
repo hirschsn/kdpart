@@ -4,6 +4,7 @@
 
 #include <random>
 #include <chrono>
+#include <iostream>
 
 // Poor man's test framework
 #undef NDEBUG
