@@ -136,7 +136,8 @@ void mashall_test(const kdpart::PartTreeStorage& t)
     CHECK(t == t2);
 }
 
-void test_for_equal_partitioning(const kdpart::PartTreeStorage& told, const kdpart::PartTreeStorage& tnew, int size, const std::array<int, 3>& box, const std::vector<double>& cellweights)
+
+double imbalance(const kdpart::PartTreeStorage& told, const kdpart::PartTreeStorage& tnew, int size, const std::array<int, 3>& box, const std::vector<double>& cellweights)
 {
     kdpart::util::GlobalVector<double> global_load(MPI_COMM_WORLD, cellweights);
 
@@ -168,11 +169,9 @@ void test_for_equal_partitioning(const kdpart::PartTreeStorage& told, const kdpa
         }
     }
     double max = *std::max_element(std::begin(load), std::end(load));
-    double min = *std::min_element(std::begin(load), std::end(load));
+    double avg = std::accumulate(std::begin(load), std::end(load), 0.0) / size;
 
-    double quot = max / min;
-    // Be conservative, here
-    CHECK(quot < 2.0);
+    return max / avg;
 }
 
 void check_it()
@@ -220,10 +219,12 @@ void check_it()
 
         // Provide weights for own cells and repartition (reuse int rng).
         std::vector<double> weights(ncells);
-        std::generate(std::begin(weights), std::end(weights), [&uniform_dist, &rng](){
-            return static_cast<double>(uniform_dist(rng));
+        std::generate(std::begin(weights), std::end(weights), [&uniform_dist, &rng, rank](){
+            return static_cast<double>(uniform_dist(rng) + 200 * rank); // Add "rank" to generate imbalance
         });
+        double imba_before = imbalance(t, t, size, box, weights);
         auto t2 = kdpart::repart_parttree_par(t, MPI_COMM_WORLD, weights);
+        double imba_after = imbalance(t, t2, size, box, weights);
 
         // Check repartitioned tree
         all_valid_subdomains_check(t2, box);
@@ -232,10 +233,12 @@ void check_it()
         all_procs_have_cells(t2, size, box, false); // not partitioned equally w.r.t. no. of cells, so no eq. dist check.
         all_procs_disjoint(t2, size, box);
         mashall_test(t2);
-        test_for_equal_partitioning(t, t2, size, box, weights);
+        // Test for equal partitioning
+        CHECK(imba_after <= imba_before); // Conservative: Tests reduction only
+        CHECK(imba_after < 2.0);
 
         if (rank == 0)
-            std::cout << " passed." << std::endl;
+            std::cout << " passed. (Imbalance (before/after): " << imba_before << " / " << imba_after << ")" << std::endl;
         MPI_Barrier(MPI_COMM_WORLD);
     }
 }
@@ -244,5 +247,6 @@ int main(int argc, char **argv)
 {
     MPI_Init(&argc, &argv);
     check_it();
+    //check_imbalance();
     MPI_Finalize();
 }
