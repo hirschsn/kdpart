@@ -247,6 +247,5 @@ int main(int argc, char **argv)
 {
     MPI_Init(&argc, &argv);
     check_it();
-    //check_imbalance();
     MPI_Finalize();
 }
