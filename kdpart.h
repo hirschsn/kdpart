@@ -164,6 +164,34 @@ struct PartTreeStorage {
         return node_of_cell(p).rank();
     }
 
+    /** Applies a function to each node in the tree in a depth-first traversal.
+     * Function f is being called on the parent node before any of its childs.
+     * 
+     * Changing nodes through "f" is explicitly supported. Especially: Children
+     * which are added to a node through "f" are visited by the very same call
+     * to "walk".
+     * Used to initialize the tree (therefore, non-const).
+     * 
+     * @param f Void function with a single parameter of type const_node_access_type.
+     */
+    template <typename Func>
+    void walk(Func f) {
+        walk([](auto){ return true; }, f, 0);
+    }
+
+    /** Applies a function to each node in the tree in a depth-first traversal.
+     * Descends into subtrees only if p(node) is true.
+     * 
+     * @see walk(Func f)
+     * 
+     * @param p Predicate that determines the descend into/pruning of a subtree
+     * @param f Void function with a single parameter of type const_node_access_type.
+     */
+    template <typename Pred, typename Func>
+    void walkp(Pred p, Func f) {
+        walk(p, f, 0);
+    }
+
 private:
     // NodeAccess
     friend class NodeAccess<PartTreeStorage&, int&, point_type&>;
@@ -186,20 +214,6 @@ private:
         return node_access_type(*this, 0);
     }
 
-    /** Applies a function to each node in the tree in a depth-first traversal.
-     * Function f is being called on the parent node before any of its childs.
-     * 
-     * Changing nodes through "f" is explicitly supported. Especially: Children
-     * which are added to a node through "f" are visited by the very same call
-     * to "walk".
-     * Used to initialize the tree (therefore, non-const).
-     * 
-     * @param f Void function with a single parameter of type const_node_access_type.
-     */
-    template <typename Func>
-    void walk(Func f) {
-        walk(f, 0);
-    }
 
     /** Ensures the tree can hold a fully refined binary tree of depth "new_depth".
      * Possibly reallocates data. Therefore, this method can throw std::bad_alloc.
@@ -225,12 +239,14 @@ private:
      * @param f Void function with a single parameter of type
      *          const_node_access_type
      */
-    template <typename Func>
-    void walk(Func f, int i) {
-        f(node(i));
-        if (inner[i]) {
-            walk(f, 2 * i + 1);
-            walk(f, 2 * i + 2);
+    template <typename Pred, typename Func>
+    void walk(Pred p, Func f, int i) {
+        if (p(node(i))) {
+            f(node(i));
+            if (inner[i]) {
+                walk(p, f, 2 * i + 1);
+                walk(p, f, 2 * i + 2);
+            }
         }
     }
 
