@@ -27,7 +27,7 @@ $(LIBKDPART): $(LIBKDPART_OBJ)
 	$(RANLIB) $@
 
 $(LIBKDPART_SO): $(LIBKDPART_OBJ)
-	$(CXX) -shared -o $@ $<
+	$(CXX) -shared -o $@ $?
 
 $(LIBKDPART_OBJ): $(LIBKDPART_HDR)
 
