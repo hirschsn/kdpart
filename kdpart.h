@@ -194,8 +194,8 @@ struct PartTreeStorage {
 
 private:
     // NodeAccess
-    friend class NodeAccess<PartTreeStorage&, int&, point_type&>;
-    friend class NodeAccess<const PartTreeStorage&, int, const point_type&>;
+    friend struct NodeAccess<PartTreeStorage&, int&, point_type&>;
+    friend struct NodeAccess<const PartTreeStorage&, int, const point_type&>;
     // Marshalling
     friend size_t marshall::marshall_size(const PartTreeStorage&);
     friend size_t marshall::marshall_size_per_node(const PartTreeStorage&);
