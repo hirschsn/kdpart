@@ -8,6 +8,8 @@ CXXFLAGS = --std=c++14 -O3 -march=native
 AR = ar
 RANLIB = ranlib
 
+MPIEXEC = mpiexec
+
 LIBKDPART_HDR = kdpart.h util/find.h util/codim_sum.h util/mpi_global_vector.h
 LIBKDPART_SRC = kdpart.cc util/mpi_global_vector.cc
 LIBKDPART_OBJ = $(LIBKDPART_SRC:.cc=.o)
@@ -45,4 +47,7 @@ $(TGT): $(LIBKDPART)
 clean:
 	rm -f $(TGT_OBJ) $(TGT) $(LIBKDPART_SO) $(LIBKDPART) $(LIBKDPART_OBJ)
 
-.PHONY: all clean
+check: all
+	for i in `seq 1 4`; do $(MPIEXEC) --oversubscribe -n $$i ./kdpart_test_par; done
+
+.PHONY: all clean check
