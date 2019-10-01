@@ -3,7 +3,7 @@
 .SUFFIXES: .cc .o
 
 CXX = mpic++
-CXXFLAGS = --std=c++14 -O3 -march=native
+CXXFLAGS = -std=c++14 -O3 -march=native
 
 AR = ar
 RANLIB = ranlib
