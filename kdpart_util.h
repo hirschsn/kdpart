@@ -18,7 +18,7 @@ inline MPI_Datatype _mpi_datatype();
 template <>
 inline MPI_Datatype _mpi_datatype<double>() {
     return MPI_DOUBLE;
-};
+}
 
 /** Allgather wrapper.
  */
