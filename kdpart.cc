@@ -79,7 +79,7 @@ PartTreeStorage unmarshall_parttree(std::vector<char> mdata)
 std::pair<int, int> fast_splitting(std::vector<double> loads, int nproc)
 {
     const double target_frac = 0.5;
-    int nproc1 = target_frac * nproc;
+    int nproc1 = static_cast<int>(target_frac * nproc);
     // Fraction for splitting the payload at approx. half. However, account for odd sizes (frac != 0.5).
     double frac = static_cast<double>(nproc1) / nproc;
 
