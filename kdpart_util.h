@@ -8,6 +8,8 @@
 #include <mpi.h>
 #include <vector>
 #include <limits>
+#include <cassert>
+#include <algorithm>
 
 namespace kdpart {
 namespace util {

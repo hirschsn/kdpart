@@ -16,11 +16,7 @@
 
 #include <vector>
 #include <array>
-#include <algorithm>
-#include <numeric>
 #include <tuple>
-#include <cstring> // memcpy for marshalling (type punning)
-#include <cassert>
 #include <mpi.h>
 
 #include "kdpart_util.h"

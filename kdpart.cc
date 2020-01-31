@@ -1,6 +1,8 @@
 // See LICENSE for license details.
 
 #include "kdpart.h"
+#include <cstring>
+#include <numeric>
 
 namespace kdpart {
 
