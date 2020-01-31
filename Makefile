@@ -13,7 +13,7 @@ MPIEXEC = mpiexec
 LIBKDPART_MASTER_HDR = kdpart.h
 LIBKDPART_UTIL_HDR = util/find.h util/codim_sum.h util/mpi_global_vector.h
 LIBKDPART_HDR = $(LIBKDPART_MASTER_HDR) $(LIBKDPART_UTIL_HDR)
-LIBKDPART_SRC = kdpart.cc util/mpi_global_vector.cc
+LIBKDPART_SRC = kdpart.cc
 LIBKDPART_OBJ = $(LIBKDPART_SRC:.cc=.o)
 LIBKDPART = libkdpart.a
 LIBKDPART_SO = libkdpart.so

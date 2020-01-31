@@ -14,11 +14,11 @@ namespace kdpart {
 namespace util {
 
 template <typename T>
-struct mpi_type;
+inline MPI_Datatype _mpi_datatype();
 
 template <>
-struct mpi_type<double> {
-    static MPI_Datatype value;
+inline MPI_Datatype _mpi_datatype<double>() {
+    return MPI_DOUBLE;
 };
 
 /** Allgather wrapper.
@@ -63,7 +63,7 @@ private:
             prefixes[i] = prefixes[i - 1] + sizes[i - 1];
         int global_size = prefixes[comm_size - 1] + sizes[comm_size - 1];
         global_data.resize(global_size);
-        MPI_Allgatherv(local_data.data(), local_size, mpi_type<T>::value, global_data.data(), sizes.data(), prefixes.data(), mpi_type<T>::value, comm);
+        MPI_Allgatherv(local_data.data(), local_size, _mpi_datatype<T>(), global_data.data(), sizes.data(), prefixes.data(), _mpi_datatype<T>(), comm);
     }
 };
 
