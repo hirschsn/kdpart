@@ -151,36 +151,6 @@ std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc)
     return std::make_pair(opt->where, opt->nproc1);
 }
 
-int linearize(const std::array<int, 3> c, const std::array<int, 3> box)
-{
-    return (c[0] * box[1] + c[1]) * box[2] + c[2];
-}
-
-PartTreeStorage repart_parttree_par(const PartTreeStorage& s, MPI_Comm comm, const std::vector<double>& cellweights)
-{
-    using cell_type = std::array<int, 3>;
-    util::GlobalVector<double> global_load(comm, cellweights);
-
-    // Is only being evaluated on rank 0
-    auto global_load_func = [&s, &global_load](const cell_type& c){
-        auto n = s.node_of_cell(c);
-
-        // Transform c to process ("rank") local coordinates
-        cell_type loc_c, loc_box;
-        for (auto i = 0; i < 3; ++i) {
-            loc_c[i] = c[i] - n.lu()[i];
-            loc_box[i] = n.ro()[i] - n.lu()[i];
-        }
-
-        auto i = linearize(loc_c, loc_box);
-        assert(global_load.size(n.rank()) > i);
-        
-        return global_load(n.rank(), i);
-    };
-
-    return make_parttree_par(comm, s.root().ro(), global_load_func, quality_splitting);
-}
-
 PartTreeStorage initial_part_par(int size, std::array<int, 3> ro)
 {
     auto load = [](const auto&) {

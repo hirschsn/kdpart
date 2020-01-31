@@ -568,17 +568,48 @@ std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc);
  * @param c 3d coordinate
  * @param box Box size.
  */
-int linearize(const std::array<int, 3> c, const std::array<int, 3> box);
+typedef int (*LinearizeFunc)(const std::array<int, 3>&, const std::array<int, 3>&);
+constexpr inline int linearize(const std::array<int, 3>& c, const std::array<int, 3>& box)
+{
+    return (c[0] * box[1] + c[1]) * box[2] + c[2];
+}
 
 /** Repartitions a tree given weights for its cells.
  * 
  * Collective function. Must be called by all ranks in the communicator "comm".
  * 
+ * @param LinearizeFunc function that defines the lineraization of "cellweights".
+ * 
  * @param s PartTreeStorage to be repartitioned
  * @param comm Communicator
  * @param cellweights Weights to use for repartitioning. Must be ordered according to "linearize".
  */
-PartTreeStorage repart_parttree_par(const PartTreeStorage& s, MPI_Comm comm, const std::vector<double>& cellweights);
+template <LinearizeFunc LinearizeFn = linearize>
+PartTreeStorage repart_parttree_par(const PartTreeStorage& s, MPI_Comm comm, const std::vector<double>& cellweights)
+{
+    using cell_type = std::array<int, 3>;
+    util::GlobalVector<double> global_load(comm, cellweights);
+
+    // Is only being evaluated on rank 0
+    auto global_load_func = [&s, &global_load](const cell_type& c){
+        auto n = s.node_of_cell(c);
+
+        // Transform c to process ("rank") local coordinates
+        cell_type loc_c, loc_box;
+        for (auto i = 0; i < 3; ++i) {
+            loc_c[i] = c[i] - n.lu()[i];
+            loc_box[i] = n.ro()[i] - n.lu()[i];
+        }
+
+        auto i = LinearizeFn(loc_c, loc_box);
+        assert(global_load.size(n.rank()) > i);
+        
+        return global_load(n.rank(), i);
+    };
+
+    return make_parttree_par(comm, s.root().ro(), global_load_func, quality_splitting);
+}
+
 
 /** Returns a tree with "size" subdomain.
  * 
