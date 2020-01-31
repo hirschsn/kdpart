@@ -108,7 +108,7 @@ struct PartTreeStorage {
 
     /** Returns the root node.
      */
-    const_node_access_type root() const {
+    inline const_node_access_type root() const {
         return const_node_access_type(*this, 0);
     }
 
@@ -210,7 +210,7 @@ private:
 
     /** Returns a modifyable reference to the root node.
      */
-    node_access_type root() {
+    inline node_access_type root() {
         return node_access_type(*this, 0);
     }
 
@@ -220,7 +220,7 @@ private:
      * 
      * @param new_depth Depth to support after this call.
      */
-    void ensure_depth(size_t new_depth) {
+    inline void ensure_depth(size_t new_depth) {
         size_t new_size = (static_cast<size_t>(1) << (new_depth + 1)) - 1;
         if (storage_size() < new_size)
            apply_to_data_vectors([new_size](auto& v){ v.resize(new_size); });
@@ -229,7 +229,7 @@ private:
     /** Returns true if this tree holds a node with index i.
      * Precondition: "i" < storage_size(), otherwise UB.
      */
-    bool is_existing_node(size_t i) const {
+    inline bool is_existing_node(size_t i) const {
         // Node exists if parent is an inner node
         return inner[(i - 1) / 2];
     }
@@ -282,7 +282,7 @@ private:
 
     /** Returns the number of nodes that can be hold in the current state.
      */
-    size_t storage_size() const {
+    inline size_t storage_size() const {
         return inner.size();
     }
 
