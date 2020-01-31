@@ -4,7 +4,7 @@
 
 CXX = mpic++
 CXXFLAGS = -std=c++14 -O3 -march=native
-CXXFLAGS += -Wall -Wextra
+CXXFLAGS += -Wall -Wextra -pedantic
 
 AR = ar
 RANLIB = ranlib
