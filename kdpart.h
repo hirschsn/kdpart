@@ -10,6 +10,7 @@
  * structure it into modules. Only include this header ("kdpart.h") in
  * a one compiled file only. Otherwise you will get linker errors.
  */
+#pragma once
 #ifndef KDPART_H_INCLUDED
 #define KDPART_H_INCLUDED
 
@@ -22,9 +23,7 @@
 #include <cassert>
 #include <mpi.h>
 
-#include "util/mpi_global_vector.h"
-#include "util/codim_sum.h"
-#include "util/find.h"
+#include "kdpart_util.h"
 
 namespace kdpart {
 

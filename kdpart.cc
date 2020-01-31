@@ -85,7 +85,7 @@ std::pair<int, int> fast_splitting(std::vector<double> loads, int nproc)
 
     std::partial_sum(loads.begin(), loads.end(), loads.begin());
     decltype(loads)::value_type target_load = frac * loads[loads.size() - 1];
-    int where = std::distance(loads.begin(), ::util::find_nearest(loads.begin(), loads.end(), target_load));
+    int where = std::distance(loads.begin(), util::find_nearest(loads.begin(), loads.end(), target_load));
 
     return std::make_pair(where, nproc1);
 }
@@ -110,7 +110,7 @@ std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc)
         // Find most equal load splitting to size1 vs. nproc-size1 processor splitting
         double frac = static_cast<double>(size1) / nproc;
         decltype(loads)::value_type target_load = frac * maxload;
-        auto end1 = ::util::find_nearest(loads.begin(), loads.end(), target_load);
+        auto end1 = util::find_nearest(loads.begin(), loads.end(), target_load);
 
         const int pprefix = size1;
         const int psuffix = nproc - size1;
@@ -144,7 +144,7 @@ std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc)
         const double comp = std::max(lprefix / pprefix, lsuffix / psuffix) * (1.0 + 0.01 * (std::max(pprefix, psuffix) - std::min(pprefix, psuffix)));
         values.push_back({comp, where, pprefix});
     }
-    auto opt = ::util::middle_most_min_element(std::begin(values), std::end(values), [](const opt_value& a, const opt_value& b){
+    auto opt = util::middle_most_min_element(std::begin(values), std::end(values), [](const opt_value& a, const opt_value& b){
         return a.comp < b.comp;
     });
     

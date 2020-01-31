@@ -11,9 +11,7 @@ RANLIB = ranlib
 
 MPIEXEC = mpiexec
 
-LIBKDPART_MASTER_HDR = kdpart.h
-LIBKDPART_UTIL_HDR = util/find.h util/codim_sum.h util/mpi_global_vector.h
-LIBKDPART_HDR = $(LIBKDPART_MASTER_HDR) $(LIBKDPART_UTIL_HDR)
+LIBKDPART_HDR = kdpart.h kdpart_util.h
 LIBKDPART_SRC = kdpart.cc
 LIBKDPART_OBJ = $(LIBKDPART_SRC:.cc=.o)
 LIBKDPART = libkdpart.a
@@ -56,7 +54,6 @@ install: all
 	mkdir -p $(PREFIX)/lib
 	mkdir -p $(PREFIX)/include/kdpart/util
 	cp -f $(LIBKDPART_SO) $(PREFIX)/lib
-	cp -f $(LIBKDPART_MASTER_HDR) $(PREFIX)/include/kdpart
-	cp -f $(LIBKDPART_UTIL_HDR) $(PREFIX)/include/kdpart/util
+	cp -f $(LIBKDPART_HDR) $(PREFIX)/include/kdpart
 
 .PHONY: all clean check install
