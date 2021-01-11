@@ -4,7 +4,7 @@
  * This is intentional for NodeAccess and NodeTreeStorage, so a compiler
  * can optimize the accesses via the proxy object and the tree traversals
  * done in the storage class into direct iterations over arrays.
- * 
+ *
  * However, the rest of the functionality (tree creation, node splitting,
  * utils, etc.) is also implemented in headers since I was too lazy to
  * structure it into modules. Only include this header ("kdpart.h") in
@@ -109,7 +109,7 @@ struct PartTreeStorage {
 
     /** Applies a function to each node in the tree with *no* guarantee of
      * traversal order.
-     * 
+     *
      * @param f Void function with a single paramter of type const_node_access_type.
      */
     template <typename Func>
@@ -122,7 +122,7 @@ struct PartTreeStorage {
 
     /** Returns the node corresponding to the subdomain of of rank "rank".
      * Precondition: Tree stores "rank", i.e. was created with "size" > "rank".
-     * 
+     *
      * @param rank Subdomain number to find.
      */
     inline const_node_access_type node_of_rank(int rank) const {
@@ -135,7 +135,7 @@ struct PartTreeStorage {
      * Precondition: Tree was created with lu and ro s.t.:
      *               lu[i] <= p[i] < ro[i] for i = 0, 1, 2
      *               I.e. "p" is a coordinate inside its domain.
-     * 
+     *
      * @param p Point/Cell to find.
      */
     inline const_node_access_type node_of_cell(const point_type& p) const {
@@ -161,12 +161,12 @@ struct PartTreeStorage {
 
     /** Applies a function to each node in the tree in a depth-first traversal.
      * Function f is being called on the parent node before any of its childs.
-     * 
+     *
      * Changing nodes through "f" is explicitly supported. Especially: Children
      * which are added to a node through "f" are visited by the very same call
      * to "walk".
      * Used to initialize the tree (therefore, non-const).
-     * 
+     *
      * @param f Void function with a single parameter of type const_node_access_type.
      */
     template <typename Func>
@@ -176,9 +176,9 @@ struct PartTreeStorage {
 
     /** Applies a function to each node in the tree in a depth-first traversal.
      * Descends into subtrees only if p(node) is true.
-     * 
+     *
      * @see walk(Func f)
-     * 
+     *
      * @param p Predicate that determines the descend into/pruning of a subtree
      * @param f Void function with a single parameter of type const_node_access_type.
      */
@@ -212,7 +212,7 @@ private:
 
     /** Ensures the tree can hold a fully refined binary tree of depth "new_depth".
      * Possibly reallocates data. Therefore, this method can throw std::bad_alloc.
-     * 
+     *
      * @param new_depth Depth to support after this call.
      */
     inline void ensure_depth(size_t new_depth) {
@@ -294,7 +294,7 @@ private:
     }
 
     /** Returns a modifyable proxy object for easy read and write access of all data associated with a single node.
-     * 
+     *
      * Settings of node properties is explicitly supported.
      */
     inline node_access_type node(size_t i) {
@@ -345,7 +345,7 @@ private:
     // All values are explicitly 0 for non-existent *and leaf nodes*.
     std::vector<int> split_direction; //< direction in which the node i is split if i is not a leaf node
     std::vector<int> split_coord; //< coordinate at which node i is split if i is not a leaf node
-    std::vector<int> psplit; //< Splitting boundary of the process range. Processes <= last_left_process[i] are assigned to the left subtree of node i.
+    std::vector<int> psplit; //< Splitting boundary of the process range. Processes <= psplit[i] are assigned to the left subtree of node i.
 };
 
 /** Equality comparison operator for the PartTreeStorage class.
@@ -414,7 +414,7 @@ namespace marshall {
 
 /** Returns the size that a number of chars a buffer has to have
  * in order to be able to hold a specific PartTreeStorage object.
- * 
+ *
  * @param t Object which size is to determine
  */
 size_t marshall_size(const PartTreeStorage& t);
@@ -424,17 +424,17 @@ size_t marshall_size(const PartTreeStorage& t);
 size_t marshall_size_per_node(const PartTreeStorage& t);
 
 /** Returns a char vector representing a PartTreeStorage.
- * 
+ *
  * @param t PartTreeStorage to marshall
  */
 std::vector<char> marshall_parttree(const PartTreeStorage& t);
 
 /** Returns the PartTreeStorage encoded in a char buffer.
- * 
+ *
  * Warning: Using this method on a char buffer which has not been created
  *          with "marshall_parttree" will lead to silent faults and
  *          undefined behavior!
- * 
+ *
  * @param mdata Marshalled PartTreeStorage
  */
 PartTreeStorage unmarshall_parttree(std::vector<char> mdata);
@@ -443,14 +443,14 @@ PartTreeStorage unmarshall_parttree(std::vector<char> mdata);
 
 
 /** Creates a PartTreeStorage.
- * 
+ *
  * Creates a tree with exactly "size" subdomains. The splitting of parent nodes
  * into child nodes (and hence, the quality of load distribution amongst subdomains)
  * is given by the function "split". It gets evaluated whenever a node is to be
  * split and determines the actual splitting.
- * 
+ *
  * Use this on a single node only. For parallel settings, use "make_parttee_par".
- * 
+ *
  * @param size Number of subdomains
  * @param lu Lower left hand corner of the domain
  * @param ro Upper right hand corner of the domain
@@ -485,11 +485,11 @@ PartTreeStorage make_parttree(int size, std::array<int, 3> lu, std::array<int, 3
 }
 
 /** Make a PartTreeStorage in a parallel setting.
- * 
+ *
  * Collective function. Must be called by all ranks in the communicator "comm".
  * Builds the tree at the root node an broadcasts it to all nodes.
  * Don't call this function directly unless "load" can be evaluated globally on the root node!
- * 
+ *
  * @param comm Communicator to use
  * @param ro Box size
  * @param load Function (std::array<int, 3> -> double) evaluating the load of a cell. Must be evaluatable no only locally, but globally! Significant only at rank 0.
@@ -526,30 +526,30 @@ PartTreeStorage make_parttree_par(MPI_Comm comm, std::array<int, 3> ro, LFunc lo
 /********************/
 
 /** Determines a fast splitting of "loads".
- * 
+ *
  * Determines a fast splitting of "loads" into two parts based on a splitting
  * of "procs" into two parts of equal size. Or with a difference of 1 if
  * "nproc" is odd.
- * 
+ *
  * @param loads Vector of cost values
  * @param nproc Number of processes to split
- * 
+ *
  * @returns pair: index where to split "loads" at and number of processes assigned to the first subset
  */
 std::pair<int, int> fast_splitting(std::vector<double> loads, int nproc);
 
 /** Finds a more elaborate splitting of "loads" cost values and "procs" ranks.
- * 
+ *
  * Determines the best load splitting of loads into two parts.
  * The proc splitting is such that both subsets are guaranteed to have at least 1 element.
- * 
+ *
  * The function searches all possible "procs" splittings and their implied "loads" splittings
  * for the one that minimites:
  * max(prefix sum of load / nproc1, rest of load / rest of nproc).
- * 
+ *
  * Where "prefix sum of loads" is determined such that the fraction
  * "prefix sum of loads" / "rest of load" is closest to "nproc1" / "rest of nproc".
- * 
+ *
  * Also, the function uses a heuristic to avoid the splitting into "procs" subset of
  * very unequal cardinalities (see comment in function).
  *
@@ -558,9 +558,9 @@ std::pair<int, int> fast_splitting(std::vector<double> loads, int nproc);
 std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc);
 
 /** Linearizes a 3d coordinate into a 1d index
- * 
+ *
  * Precondition: 0 <= c[i] < box[i] for i = 0, 1, 2
- * 
+ *
  * @param c 3d coordinate
  * @param box Box size.
  */
@@ -571,11 +571,11 @@ constexpr inline int linearize(const std::array<int, 3>& c, const std::array<int
 }
 
 /** Repartitions a tree given weights for its cells.
- * 
+ *
  * Collective function. Must be called by all ranks in the communicator "comm".
- * 
+ *
  * @param LinearizeFunc function that defines the lineraization of "cellweights".
- * 
+ *
  * @param s PartTreeStorage to be repartitioned
  * @param comm Communicator
  * @param cellweights Weights to use for repartitioning. Must be ordered according to "linearize".
@@ -599,7 +599,7 @@ PartTreeStorage repart_parttree_par(const PartTreeStorage& s, MPI_Comm comm, con
 
         auto i = LinearizeFn(loc_c, loc_box);
         assert(global_load.size(n.rank()) > i);
-        
+
         return global_load(n.rank(), i);
     };
 
@@ -608,12 +608,12 @@ PartTreeStorage repart_parttree_par(const PartTreeStorage& s, MPI_Comm comm, con
 
 
 /** Returns a tree with "size" subdomain.
- * 
+ *
  * Suitable for an initial partitioning with more or less equally sized subdomains.
- * 
+ *
  * Non-collective. However, different processes calling with the same "size" and "ro"
  * will get the same tree.
- * 
+ *
  * @param size Number of subdomains (communicator size in MPI setting)
  * @param ro Box size
  */
