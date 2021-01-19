@@ -100,7 +100,7 @@ void all_procs_have_cells(const kdpart::PartTreeStorage& t, int size, const std:
 
     for (auto nc: ncells)
         CHECK(nc > 0);
-    
+
     if (check_equal_cell_dist) {
         auto min = *std::min_element(std::begin(ncells), std::end(ncells));
         auto max = *std::max_element(std::begin(ncells), std::end(ncells));
@@ -154,7 +154,7 @@ double imbalance(const kdpart::PartTreeStorage& told, const kdpart::PartTreeStor
 
         auto i = kdpart::linearize(loc_c, loc_box);
         assert(global_load.size(n.rank()) > i);
-        
+
         return global_load(n.rank(), i);
     };
 
@@ -183,11 +183,11 @@ void check_it()
 
     const int N = 100;
     int size, rank;
-    MPI_Comm_size(MPI_COMM_WORLD, &size); 
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank); 
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     if (rank == 0)
-        std::cout << "Doing " << N << " checks with " << size << " procs." << std::endl;
+        std::cout << "[global] Doing " << N << " checks with " << size << " procs." << std::endl;
 
     for (int i = 0; i < N; ++i) {
         std::array<int, 3> box = {{uniform_dist(rng), uniform_dist(rng), uniform_dist(rng)}};
@@ -197,7 +197,7 @@ void check_it()
         auto t = kdpart::initial_part_par(size, box);
 
         if (rank == 0)
-            std::cout << "TEST " << i;
+            std::cout << "[global] TEST " << i;
 
         // Check initial tree
         all_valid_subdomains_check(t, box);
@@ -210,7 +210,7 @@ void check_it()
             std::cout << " passed." << std::endl;
 
         if (rank == 0)
-            std::cout << "REPART TEST " << i;
+            std::cout << "[global] REPART TEST " << i;
 
         // Get own subdomain size
         std::array<int, 3> lu, ro;
@@ -243,9 +243,71 @@ void check_it()
     }
 }
 
+
+void check_it_local()
+{
+    std::random_device r;
+    std::default_random_engine rng(r());
+    //std::uniform_int_distribution<int> uniform_dist(50, 500);
+    std::uniform_int_distribution<int> uniform_dist(50, 100);
+
+    const int N = 100;
+    int size, rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    if (rank == 0)
+        std::cout << "[local] Doing " << N << " checks with " << size << " procs." << std::endl;
+
+    for (int i = 0; i < N; ++i) {
+        std::array<int, 3> box = {{uniform_dist(rng), uniform_dist(rng), uniform_dist(rng)}};
+        // Make sure every node has the same box
+        MPI_Bcast(box.data(), 3, MPI_INT, 0, MPI_COMM_WORLD);
+
+        auto t = kdpart::initial_part_par(size, box);
+
+        if (rank == 0)
+            std::cout << "[local] REPART TEST " << i;
+
+        // Get own subdomain size
+        std::array<int, 3> lu, ro;
+        std::tie(lu, ro) = t.subdomain_bounds(rank);
+        int ncells = area(lu, ro);
+
+        // Provide weights for own cells and repartition (reuse int rng).
+        std::vector<double> weights(ncells);
+        std::generate(std::begin(weights), std::end(weights), [&uniform_dist, &rng, rank](){
+            return static_cast<double>(uniform_dist(rng) + 200 * (rank % 2)); // Every other process has more load
+        });
+        double imba_before = imbalance(t, t, size, box, weights);
+        auto old_tree = t;
+        kdpart::repart_parttree_par_local(t, MPI_COMM_WORLD, weights);
+        double imba_after = imbalance(old_tree, t, size, box, weights);
+
+        // Check repartitioned tree
+        all_valid_subdomains_check(t, box);
+        all_cells_assigned_check(t, box, size);
+        all_procs_assigned_check(t, size, box);
+        all_procs_have_cells(t, size, box, false); // not partitioned equally w.r.t. no. of cells, so no eq. dist check.
+        all_procs_disjoint(t, size, box);
+        mashall_test(t);
+        // Test for equal partitioning
+        CHECK(imba_after <= imba_before); // Conservative: Tests reduction only
+        CHECK(imba_after < 2.0);
+
+        if (rank == 0)
+            std::cout << " passed. (Imbalance (before/after): " << imba_before << " / " << imba_after << ")" << std::endl;
+        MPI_Barrier(MPI_COMM_WORLD);
+    }
+}
+
+
 int main(int argc, char **argv)
 {
     MPI_Init(&argc, &argv);
+    std::cout << "Checking global repart..." << std::endl;
     check_it();
+    std::cout << "Checking local repart..." << std::endl;
+    check_it_local();
     MPI_Finalize();
 }

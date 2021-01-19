@@ -17,6 +17,7 @@
 #include <vector>
 #include <array>
 #include <tuple>
+#include <algorithm>
 #include <mpi.h>
 
 #include "kdpart_util.h"
@@ -46,6 +47,13 @@ struct NotALeafNodeError: public std::logic_error {
 template <typename TStorage, typename IntRet, typename PointRet>
 struct NodeAccess {
     NodeAccess(TStorage& s, size_t i): s(s), i(i) {}
+    NodeAccess(const NodeAccess &other): s(other.s), i(other.i) {}
+    NodeAccess(NodeAccess &&other): s(std::forward<TStorage&>(other.s)), i(std::forward<size_t>(other.i)) {}
+    NodeAccess &operator=(const NodeAccess &other) {
+        s = other.s;
+        i = other.i;
+        return *this;
+    }
 
     inline IntRet inner() const { return s.inner[i]; }
     inline IntRet split_direction() const { return s.split_direction[i]; }
@@ -64,9 +72,9 @@ struct NodeAccess {
     inline PointRet ro() const { return s.ro[i]; }
 
     // Currently unused
-    //inline NodeAccess parent() { return NodeAccess(s, (i - 1) / 2); }
-    inline NodeAccess child1() { return NodeAccess(s, 2 * i + 1); }
-    inline NodeAccess child2() { return NodeAccess(s, 2 * i + 2); }
+    inline NodeAccess parent() const { return NodeAccess(s, (i - 1) / 2); }
+    inline NodeAccess child1() const { return NodeAccess(s, 2 * i + 1); }
+    inline NodeAccess child2() const { return NodeAccess(s, 2 * i + 2); }
 
     inline bool is_root() const { return i == 0; }
 
@@ -80,10 +88,82 @@ struct NodeAccess {
     inline size_t nproc() const { return s.pend[i] - s.pstart[i] + 1; }
 
     inline bool is_inner() const { return inner(); }
-    // Currently unused
+
     // !is_inner does not state anything about the existence of the node itself, therefore the check for parent().is_inner() is needed.
     //inline bool is_leaf() const { return !is_inner() && parent().is_inner(); }
+    inline bool is_leaf() const { return !is_inner(); }
+
+    // "limb end": a subtree consisting of 2 or 3 leaves.
+    // "is_limbend()" returns "true" if this node is the root of a limb end.
+    inline bool is_limbend_2() const { return is_inner() && child1().is_leaf() && child2().is_leaf(); }
+    inline bool is_limbend_3_left() const { return is_inner() && child1().is_inner() && child1().child1().is_leaf() && child1().child2().is_leaf() && child2().is_leaf(); }
+    inline bool is_limbend_3_right() const { return is_inner() && child1().is_leaf() && child2().is_inner() && child2().child1().is_leaf() && child2().child2().is_leaf(); }
+    inline bool is_limbend_3() const { return is_limbend_3_left() || is_limbend_3_right(); }
+    inline bool is_limbend() const { return is_limbend_2() || is_limbend_3(); }
+
+
+    /**
+     * auf diesen Teil dann:
+     *
+     * t.walk([&t, &splitfunc](auto node) {
+            // Need to split the node further?
+            if (node.nproc() > 1) {
+                t.ensure_depth(node.depth() + 1); // nicht nötig
+                impl::split_node(node, splitfunc);
+            }
+        });
+    *
+    * (siehe make_parttree)
+    */
+    inline NodeAccess find_limbend_root() const
+    {
+        assert(is_leaf()); // Precondition
+        NodeAccess s = *this;
+
+        // Find the first limb end. On a split of three processes, i.e.
+        //     0
+        //    / \     .
+        //   1   x    .
+        //      / \   .
+        //     2   3
+        // "1" will find "0" as limbend and "2", "3" will find "x".
+        // This is fixed afterwards.
+        while (!s.is_root()) {
+            if (s.is_limbend())
+                break;
+            s = s.parent();
+        }
+
+        // Note that the root node itself can be limb end.
+        if (s.is_limbend()) {
+            // Check if a limbend of 2 vertices belongs to a limbend with 3 vertices
+            if (s.is_limbend_2() && !s.is_root()) {
+                NodeAccess parent = s.parent();
+                if (parent.is_limbend_3())
+                    return parent;
+                else
+                    return s;
+            } else {
+                return s;
+            }
+        }
+
+        assert(false);
+    }
+
+    bool operator==(const NodeAccess &other) const {
+        assert(s == other.s); // XXX: ?
+        return i == other.i;
+    }
+
+    bool operator!=(const NodeAccess &other) const {
+        assert(s == other.s);
+        return i != other.i;
+    }
+
 private:
+    friend struct PartTreeStorage;
+
     TStorage& s;
     size_t i;
 };
@@ -131,6 +211,12 @@ struct PartTreeStorage {
         });
     }
 
+    inline node_access_type node_of_rank(int rank) {
+        return find([rank](auto node) {
+            return rank <= node.psplit() ? Descend::Left : Descend::Right;
+        });
+    }
+
     /** Returns the node responsible for point/cell "p".
      * Precondition: Tree was created with lu and ro s.t.:
      *               lu[i] <= p[i] < ro[i] for i = 0, 1, 2
@@ -170,8 +256,8 @@ struct PartTreeStorage {
      * @param f Void function with a single parameter of type const_node_access_type.
      */
     template <typename Func>
-    void walk(Func f) {
-        walk([](auto){ return true; }, f, 0);
+    void walk(Func &&f) {
+        walk([](auto){ return true; }, std::forward<Func>(f), 0);
     }
 
     /** Applies a function to each node in the tree in a depth-first traversal.
@@ -183,8 +269,24 @@ struct PartTreeStorage {
      * @param f Void function with a single parameter of type const_node_access_type.
      */
     template <typename Pred, typename Func>
-    void walkp(Pred p, Func f) {
-        walk(p, f, 0);
+    void walkp(Pred &&p, Func &&f) {
+        walk(std::forward<Pred>(p), std::forward<Func>(f), 0);
+    }
+
+    /** Invalidates the information in the subtree rooted at "root".
+     * Used for local repartitioning.
+     */
+    void invalidate_subtree(node_access_type root) {
+        invalidate_subtree(root.i);
+    }
+
+    /** Apply a function to all raw std::vectors comprising this class.
+     * The argument f will get called with
+     * std::vectors of different types. Use auto lambas.
+     */
+    template <typename Func>
+    void apply_to_data_vectors(Func f) {
+        apply_to_data_vectors_impl<PartTreeStorage&>(*this, f);
     }
 
 private:
@@ -201,7 +303,6 @@ private:
     friend PartTreeStorage make_parttree(int, std::array<int, 3>, std::array<int, 3>, LFunc, SFunc);
     // Comparison
     friend bool operator==(const PartTreeStorage& a, const PartTreeStorage& b);
-
 
     /** Returns a modifyable reference to the root node.
      */
@@ -260,11 +361,28 @@ private:
         return find(c, 0);
     }
 
+    template <typename Chooser>
+    inline node_access_type find(Chooser c) {
+        return find(c, 0);
+    }
+
     /** Finds a leaf node in the subtree of "i".
      * @see find(Chooser)
      */
     template <typename Chooser>
     const_node_access_type find(Chooser c, int i) const {
+        if (!inner[i]) {
+            return node(i);
+        } else {
+            if (c(node(i)) == Descend::Left)
+                return find(c, 2 * i + 1);
+            else
+                return find(c, 2 * i + 2);
+        }
+    }
+
+    template <typename Chooser>
+    node_access_type find(Chooser c, int i) {
         if (!inner[i]) {
             return node(i);
         } else {
@@ -301,13 +419,20 @@ private:
         return node_access_type(*this, i);
     }
 
-    /** Apply a function to all raw std::vectors comprising this class.
-     * The argument f will get called with
-     * std::vectors of different types. Use auto lambas.
+    /** Invalidates the information in the subtree rooted at "root".
+     * Used for local repartitioning.
      */
-    template <typename Func>
-    void apply_to_data_vectors(Func f) {
-        apply_to_data_vectors_impl<PartTreeStorage&>(*this, f);
+    void invalidate_subtree(size_t i) {
+        // Need to save because will be invalidated by apply_to_data_vectors.
+        bool is_inner = inner[i];
+        apply_to_data_vectors([i](auto &vec){
+            vec[i] = {};
+        });
+
+        if (is_inner) {
+            invalidate_subtree(2 * i + 1);
+            invalidate_subtree(2 * i + 2);
+        }
     }
 
     /** Apply a function to all raw std::vectors comprising this class.
@@ -370,14 +495,16 @@ namespace impl {
 // }
 
 template <typename NodeAccess, typename SplitFunc> // too lazy to type the template params of NodeAccess here...
-inline void split_node(NodeAccess& node, SplitFunc split)
+inline void split_node(NodeAccess& node, SplitFunc split, int _nproc_left = 0)
 {
     int splitdir = node.depth() % 3;
     // Split at the longest direction
     //int splitdir = longest_edge(node.lu(), node.ro());
 
     int split_at, nproc_left; // Split_at is a local coordinate
-    std::tie(split_at, nproc_left) = split(splitdir, node.lu(), node.ro(), node.nproc());
+    std::tie(split_at, nproc_left) = split(splitdir, node.lu(), node.ro(), node.nproc(), _nproc_left);
+    if (_nproc_left > 0)
+        assert(nproc_left == _nproc_left);
     // Split in global coordinates, +1: split after "split_at".
     auto coord = node.lu()[splitdir] + split_at + 1;
 
@@ -462,8 +589,8 @@ PartTreeStorage make_parttree(int size, std::array<int, 3> lu, std::array<int, 3
 {
     auto codimload = util::CodimSum<decltype(load)>(load);
 
-    auto splitfunc = [&codimload, &split](int split_dir, std::array<int, 3> lu, std::array<int, 3> ro, int nproc) {
-        return split(codimload(split_dir, lu, ro), nproc);
+    auto splitfunc = [&codimload, &split](int split_dir, std::array<int, 3> lu, std::array<int, 3> ro, int nproc, int nproc_left) {
+        return split(codimload(split_dir, lu, ro), nproc, nproc_left);
     };
 
     PartTreeStorage t;
@@ -533,10 +660,11 @@ PartTreeStorage make_parttree_par(MPI_Comm comm, std::array<int, 3> ro, LFunc lo
  *
  * @param loads Vector of cost values
  * @param nproc Number of processes to split
+ * @param nproc_left Number of processes that SHOULD be assigned to the first of the two subdomains. Use "0" to not constrain this choice.
  *
  * @returns pair: index where to split "loads" at and number of processes assigned to the first subset
  */
-std::pair<int, int> fast_splitting(std::vector<double> loads, int nproc);
+std::pair<int, int> fast_splitting(std::vector<double> loads, int nproc, int nproc_left = 0);
 
 /** Finds a more elaborate splitting of "loads" cost values and "procs" ranks.
  *
@@ -553,9 +681,9 @@ std::pair<int, int> fast_splitting(std::vector<double> loads, int nproc);
  * Also, the function uses a heuristic to avoid the splitting into "procs" subset of
  * very unequal cardinalities (see comment in function).
  *
- * @see get_quick_splitting
+ * @see fast_splitting
  */
-std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc);
+std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc, int nproc_left = 0);
 
 /** Linearizes a 3d coordinate into a 1d index
  *
@@ -565,6 +693,7 @@ std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc);
  * @param box Box size.
  */
 typedef int (*LinearizeFunc)(const std::array<int, 3>&, const std::array<int, 3>&);
+
 constexpr inline int linearize(const std::array<int, 3>& c, const std::array<int, 3>& box)
 {
     return (c[0] * box[1] + c[1]) * box[2] + c[2];
@@ -604,6 +733,215 @@ PartTreeStorage repart_parttree_par(const PartTreeStorage& s, MPI_Comm comm, con
     };
 
     return make_parttree_par(comm, s.root().ro(), global_load_func, quality_splitting);
+}
+
+
+namespace {
+inline bool either_or(bool a, bool b)
+{
+    return (a || b) && (!a || !b);
+}
+
+/** Creates a mapping of ranks relative to "comm1" to "comm2".
+ */
+inline std::map<int, int> map_ranks_to_comm(MPI_Comm comm1, const std::vector<int> &ranks1, MPI_Comm comm2)
+{
+    std::map<int, int> res;
+    MPI_Group comm1_group, comm2_group;
+    MPI_Comm_group(comm1, &comm1_group);
+    MPI_Comm_group(comm2, &comm2_group);
+
+    std::vector<int> ranks2(ranks1.size(), -1);
+    MPI_Group_translate_ranks(comm1_group, ranks1.size(), ranks1.data(), comm2_group, ranks2.data());
+    assert(std::find(ranks2.begin(), ranks2.end(), -1) == ranks2.end());
+
+    assert(ranks1.size() < static_cast<size_t>(std::numeric_limits<int>::max()));
+    for (int i = 0; i < static_cast<int>(ranks1.size()); ++i)
+        res[ranks1[i]] = ranks2[i];
+
+    MPI_Group_free(&comm1_group);
+    MPI_Group_free(&comm2_group);
+    return res;
+}
+
+template <typename T>
+struct mpi_helper;
+
+template <>
+struct mpi_helper<int> {
+    /** Runs an MPI_Iallreduce on "data" and returns the request.
+     */
+    static MPI_Request iallreduce(std::vector<int> &data, MPI_Op op, MPI_Comm comm)
+    {
+        MPI_Request req;
+        MPI_Iallreduce(MPI_IN_PLACE, data.data(), static_cast<int>(data.size()), MPI_INT, op, comm, &req);
+        return req;
+    }
+};
+
+template <>
+struct mpi_helper<std::array<int, 3>>
+{
+    /** Hack: Flattens "data" and allreduces it. Returns MPI_REQUEST_NULL.
+     */
+    static MPI_Request iallreduce(std::vector<std::array<int, 3>> &data, MPI_Op op, MPI_Comm comm)
+    {
+        std::vector<int> tmp;
+        tmp.reserve(data.size() * 3);
+        for (const auto &a : data) {
+            tmp.push_back(a[0]);
+            tmp.push_back(a[1]);
+            tmp.push_back(a[2]);
+        }
+        MPI_Allreduce(MPI_IN_PLACE, tmp.data(), static_cast<int>(tmp.size()), MPI_INT, op, comm);
+        for (size_t i = 0; i < data.size(); ++i) {
+            data[i] = {tmp[3 * i], tmp[3 * i + 1], tmp[3 * i + 2]};
+        }
+        return MPI_REQUEST_NULL;
+    }
+};
+
+}
+
+/** Repartitions a kd tree inline by means of local communication of the weights
+ * and local computation of the new splits.
+ * 
+ * Repartitioning is done between 2 or 3 processes that share the same
+ * level 1 or level 2 subtree.
+ * 
+ * @returns Parameter "s"
+ * 
+ * @see repart_parttree_par
+ */
+template <LinearizeFunc LinearizeFn = linearize>
+PartTreeStorage& repart_parttree_par_local(PartTreeStorage& s, MPI_Comm comm, const std::vector<double>& cellweights)
+{
+    int size;
+    MPI_Comm_size(comm, &size);
+
+    // Nothing to do.
+    if (size == 1)
+        return s;
+
+    PartTreeStorage old_part = s; // Tree corresponding to "cellweights".
+
+    /* Find own limb end */
+    int rank;
+    MPI_Comm_rank(comm, &rank);
+    auto my_leaf = s.node_of_rank(rank);
+    auto my_limb_root  = my_leaf.find_limbend_root();
+
+    /* Get all ranks that have subdomains participating in this limb end */
+    std::vector<int> limb_neighbors;
+    limb_neighbors.reserve(3);
+    for (int r = my_limb_root.pstart(); r < my_limb_root.pend() + 1; ++r) {
+        limb_neighbors.push_back(r);
+    }
+
+    /* Distribute weights to "limb_neighbors" */
+
+    // A group of processes participating in a limb is identified by the smallest
+    // rank in this limb end.
+    const int limb_group = *std::min_element(limb_neighbors.begin(), limb_neighbors.end());
+    MPI_Comm neighcomm;
+    MPI_Comm_split(comm, limb_group, rank, &neighcomm);
+    util::GlobalVector<double> neighbor_load(neighcomm, cellweights);
+
+    // Setup a mapping from ranks relative to "comm" to ranks relative to "neighcomm"
+    // Since we chose the rank relative to "comm" as key in MPI_Comm_split,
+    // we could also do this manually:
+    // rank_to_neighrank[min(limb_neighbors)] = 0
+    // rank_to_neighrank[max(limb_neighbors)] = limb_neighbors.size() - 1;
+    // And if it is a limbend of size 3 assign rank "1" to the middle element.
+    // But this is less error prone if we ever choose to change the Comm_split.
+    const std::map<int, int> rank_to_neighrank = map_ranks_to_comm(comm, limb_neighbors, neighcomm);
+
+    using cell_type = std::array<int, 3>;
+    auto neighbor_load_func = [&old_part, &neighbor_load, &rank_to_neighrank, &limb_neighbors](const cell_type& c){
+        auto n = old_part.node_of_cell(c);
+
+        // Transform c to process ("rank") local coordinates
+        cell_type loc_c, loc_box;
+        for (auto i = 0; i < 3; ++i) {
+            loc_c[i] = c[i] - n.lu()[i];
+            loc_box[i] = n.ro()[i] - n.lu()[i];
+        }
+
+        const auto i = LinearizeFn(loc_c, loc_box);
+
+        // Map rank (relative to "comm") to "neighcomm".
+        assert(std::find(limb_neighbors.begin(), limb_neighbors.end(), n.rank()) != limb_neighbors.end());
+        const auto rank = rank_to_neighrank.at(n.rank());
+
+        assert(neighbor_load.size(rank) > i);
+        return neighbor_load(rank, i);
+    };
+
+    auto codimload = util::CodimSum<decltype(neighbor_load_func)>(neighbor_load_func);
+
+    auto splitfunc = [&codimload](int split_dir, std::array<int, 3> lu, std::array<int, 3> ro, int nproc, int nproc_left) {
+        return quality_splitting(codimload(split_dir, lu, ro), nproc, nproc_left);
+    };
+
+    /* Re-partition limb ends
+     * The process with smallest rank number is responsible for re-creating
+     * this limb
+     */
+    if (rank == my_limb_root.pstart()) {
+        auto nproc1 = my_limb_root.child1().nproc();
+        auto nproc2 = my_limb_root.child2().nproc();
+
+        // Passing "nproc1" as last parameter ensures that "nproc1" and
+        // "nproc2" do not change.
+        impl::split_node(my_limb_root, splitfunc, nproc1);
+        // Split_node avoids setting "inner", so do it manually
+        // This is also the reason why we use ".nproc()" to distinguish between
+        // nodes and not ".is_inner()"!
+        auto child1 = my_limb_root.child1(), child2 = my_limb_root.child2();
+        child1.inner() = 0;
+        child2.inner() = 0;
+
+        assert(nproc1 == child1.nproc());
+        assert(nproc2 == child2.nproc());
+
+        // In case of a 3-leaf limb split a child
+        if (child1.nproc() > 1) {
+            impl::split_node(child1, splitfunc);
+            assert(child2.nproc() == 1);
+        } else if (child2.nproc() > 1) {
+            impl::split_node(child2, splitfunc);
+            assert(child1.nproc() == 1);
+        } else {
+            assert(limb_neighbors.size() == 2);
+        }
+    }
+
+    /* Invalidate all limb ends
+     * Limb ends are invalidated on all processes not participating as well as on
+     * all participating processes BUT the one that performed the new split
+     */
+    s.walk([my_limb_root, &s, rank](auto node){
+        if (node.is_limbend() && node != my_limb_root && rank != my_limb_root.pstart()) {
+            s.invalidate_subtree(node);
+            // Stop "walk" from descending into nothing
+            node.inner() = 0;
+        }
+    });
+
+    /* Re-distribute all changes
+     * Use an Allreduce operation with MPI_MAX as operation.
+     * This works because we set all fields of all limb ends to "0" above.
+     */
+    std::vector<MPI_Request> reqs{};
+    reqs.reserve(8);
+    s.apply_to_data_vectors([comm, &reqs](auto &vec){
+        using value_type = typename std::remove_reference<decltype(vec)>::type::value_type;
+        reqs.push_back(mpi_helper<value_type>::iallreduce(vec, MPI_MAX, comm));
+    });
+    MPI_Waitall(reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
+
+    MPI_Comm_free(&neighcomm);
+    return s;
 }
 
 
