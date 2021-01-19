@@ -3,7 +3,8 @@
 .SUFFIXES: .cc .o
 
 CXX = mpic++
-CXXFLAGS = -std=c++14 -O3 -march=native
+#CXXFLAGS = -std=c++14 -O3 -march=native
+CXXFLAGS = -O0 -g3 -ggdb -std=c++14
 CXXFLAGS += -Wall -Wextra -pedantic
 
 AR = ar
@@ -22,7 +23,7 @@ TGT_SRC = kdpart_test_par.cc
 TGT_OBJ = $(TGT_SRC:.cc=.o)
 TGT = kdpart_test_par
 
-all: $(LIBKDPART_SO)
+all: $(LIBKDPART) $(LIBKDPART_SO)
 
 $(LIBKDPART): $(LIBKDPART_OBJ)
 	$(AR) rc $@ $?
@@ -47,8 +48,9 @@ $(TGT): $(LIBKDPART)
 clean:
 	rm -f $(TGT_OBJ) $(TGT) $(LIBKDPART_SO) $(LIBKDPART) $(LIBKDPART_OBJ)
 
-check: $(LIBKDPART) $(TGT)
-	for i in `seq 1 4`; do $(MPIEXEC) --oversubscribe -n $$i ./kdpart_test_par; done
+test: $(LIBKDPART) $(TGT)
+	for i in `seq 1 4`; do $(MPIEXEC) --oversubscribe -n $$i ./kdpart_test_par; if [ $$? -ne 0 ]; then break; fi; done
+	#$(MPIEXEC) --oversubscribe -n 4 xterm -e sh -c 'gdb -ex run ./kdpart_test_par'
 
 install: all
 	mkdir -p $(PREFIX)/lib

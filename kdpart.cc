@@ -78,10 +78,10 @@ PartTreeStorage unmarshall_parttree(std::vector<char> mdata)
 
 } // namespace marshall
 
-std::pair<int, int> fast_splitting(std::vector<double> loads, int nproc)
+std::pair<int, int> fast_splitting(std::vector<double> loads, int nproc, int nproc_left)
 {
     const double target_frac = 0.5;
-    int nproc1 = static_cast<int>(target_frac * nproc);
+    int nproc1 = nproc_left > 0? nproc_left: static_cast<int>(target_frac * nproc);
     // Fraction for splitting the payload at approx. half. However, account for odd sizes (frac != 0.5).
     double frac = static_cast<double>(nproc1) / nproc;
 
@@ -92,7 +92,7 @@ std::pair<int, int> fast_splitting(std::vector<double> loads, int nproc)
     return std::make_pair(where, nproc1);
 }
 
-std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc)
+std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc, int nproc_left)
 { 
     /** Struct representing a possible splitting for "quality_splitting".
      */
@@ -108,7 +108,12 @@ std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc)
     // Minimize max(prefix1 / nproc1, prefix2 / procs2)
     std::vector<opt_value> values;
     values.reserve(nproc - 1);
-    for (int size1 = 1; size1 < nproc; ++size1) {
+
+    // In case "nproc_left" is set, only inspect this as possible number of
+    // processes for the left subdomain. Otherwiese check all from 1..n
+    const int lower_bound = nproc_left > 0? nproc_left: 1;
+    const int upper_bound = nproc_left > 0? nproc_left + 1: nproc;
+    for (int size1 = lower_bound; size1 < upper_bound; ++size1) {
         // Find most equal load splitting to size1 vs. nproc-size1 processor splitting
         double frac = static_cast<double>(size1) / nproc;
         decltype(loads)::value_type target_load = frac * maxload;
