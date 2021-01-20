@@ -110,9 +110,18 @@ std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc, int 
     values.reserve(nproc - 1);
 
     // In case "nproc_left" is set, only inspect this as possible number of
-    // processes for the left subdomain. Otherwiese check all from 1..n
-    const int lower_bound = nproc_left > 0? nproc_left: 1;
-    const int upper_bound = nproc_left > 0? nproc_left + 1: nproc;
+    // processes for the left subdomain. Otherwiese check all from 2..n-2.
+    // This is to allow proper limb ends.
+    // If there are <= 3 processes, allow 1..n-1.
+    int lower_bound = 2;
+    int upper_bound = nproc - 1;
+    if (nproc_left > 0) {
+        lower_bound = nproc_left;
+        upper_bound = nproc_left + 1;
+    } else if (nproc <= 3) {
+        lower_bound = 1;
+        upper_bound = nproc;
+    }
     for (int size1 = lower_bound; size1 < upper_bound; ++size1) {
         // Find most equal load splitting to size1 vs. nproc-size1 processor splitting
         double frac = static_cast<double>(size1) / nproc;
@@ -155,6 +164,9 @@ std::pair<int, int> quality_splitting(std::vector<double> loads, int nproc, int 
         return a.comp < b.comp;
     });
     
+    if (opt->nproc1 == 1 || nproc - opt->nproc1 == 1) {
+        assert(nproc <= 3);
+    }
     return std::make_pair(opt->where, opt->nproc1);
 }
 

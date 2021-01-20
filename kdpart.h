@@ -89,7 +89,7 @@ struct NodeAccess {
 
     inline bool is_inner() const { return inner(); }
 
-    // !is_inner does not state anything about the existence of the node itself, therefore the check for parent().is_inner() is needed.
+    // is_inner does not state anything about the existence of the node itself, therefore the check for parent().is_inner() is needed.
     //inline bool is_leaf() const { return !is_inner() && parent().is_inner(); }
     inline bool is_leaf() const { return !is_inner(); }
 
@@ -102,19 +102,9 @@ struct NodeAccess {
     inline bool is_limbend() const { return is_limbend_2() || is_limbend_3(); }
 
 
-    /**
-     * auf diesen Teil dann:
-     *
-     * t.walk([&t, &splitfunc](auto node) {
-            // Need to split the node further?
-            if (node.nproc() > 1) {
-                t.ensure_depth(node.depth() + 1); // nicht nötig
-                impl::split_node(node, splitfunc);
-            }
-        });
-    *
-    * (siehe make_parttree)
-    */
+    /** Starting from a leaf node, finds the next limb end.
+     * Note that there must not be a 1:n split with n > 2 in the tree.
+     */
     inline NodeAccess find_limbend_root() const
     {
         assert(is_leaf()); // Precondition
@@ -146,6 +136,14 @@ struct NodeAccess {
             } else {
                 return s;
             }
+        }
+
+        // Check the prereq
+        const auto child1 = s.child1();
+        const auto child2 = s.child2();
+        if (((child1.nproc() == 1 && child2.nproc() > 2) || (child1.nproc() > 2 && child2.nproc()  == 1))) {
+            std::fprintf(stderr, "[libkdpart] Tree does not fulfill the prereq for local repartitioning.\n");
+            std::abort();
         }
 
         assert(false);
@@ -829,7 +827,7 @@ PartTreeStorage& repart_parttree_par_local(PartTreeStorage& s, MPI_Comm comm, co
     int rank;
     MPI_Comm_rank(comm, &rank);
     auto my_leaf = s.node_of_rank(rank);
-    auto my_limb_root  = my_leaf.find_limbend_root();
+    auto my_limb_root = my_leaf.find_limbend_root();
 
     /* Get all ranks that have subdomains participating in this limb end */
     std::vector<int> limb_neighbors;
