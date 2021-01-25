@@ -293,6 +293,18 @@ struct PartTreeStorage {
         walk(std::forward<Pred>(p), std::forward<Func>(f), 0);
     }
 
+
+    /* Depth-first traversal the subtree of node i (including i itself)
+     * calling function f on each node.
+     * @param f bool function with a single parameter of type
+     *          const_node_access_type. Return value determines if "walk"
+     *          further descends into subtree.
+     */
+    template <typename Func>
+    void walk_post(Func &&f) {
+        walk_post(std::forward<Func>(f), 0);
+    }
+
     /** Invalidates the information in the subtree rooted at "root".
      * Used for local repartitioning.
      */
@@ -363,6 +375,22 @@ private:
                 walk(p, f, 2 * i + 1);
                 walk(p, f, 2 * i + 2);
             }
+        }
+    }
+
+
+    /* Depth-first traversal the subtree of node i (including i itself)
+     * calling function f on each node.
+     * @param f bool function with a single parameter of type
+     *          const_node_access_type. Return value determines if "walk"
+     *          further descends into subtree.
+     */
+    template <typename Func>
+    void walk_post(Func f, int i) {
+        const bool b = f(node(i));
+        if (b && inner[i]) {
+            walk_post(f, 2 * i + 1);
+            walk_post(f, 2 * i + 2);
         }
     }
 
@@ -826,20 +854,8 @@ struct mpi_helper<std::array<int, 3>>
     }
 };
 
-}
-
-/** Repartitions a kd tree inline by means of local communication of the weights
- * and local computation of the new splits.
- *
- * Repartitioning is done between 2 or 3 processes that share the same
- * level 1 or level 2 subtree.
- *
- * @returns Parameter "s"
- *
- * @see repart_parttree_par
- */
-template <LinearizeFunc LinearizeFn = linearize>
-PartTreeStorage& repart_parttree_par_local(PartTreeStorage& s, MPI_Comm comm, const std::vector<double>& cellweights)
+template <LinearizeFunc LinearizeFn = linearize, typename RepartRootFunc, typename IsRepartRootPred>
+PartTreeStorage& _repart_parttree_par_local_impl(PartTreeStorage& s, MPI_Comm comm, const std::vector<double>& cellweights, RepartRootFunc &&get_subtree_repartition_root, IsRepartRootPred &&is_repartition_subtree_root)
 {
     int size;
     MPI_Comm_size(comm, &size);
@@ -854,35 +870,35 @@ PartTreeStorage& repart_parttree_par_local(PartTreeStorage& s, MPI_Comm comm, co
     int rank;
     MPI_Comm_rank(comm, &rank);
     auto my_leaf = s.node_of_rank(rank);
-    auto my_limb_root = my_leaf.find_limbend_root();
+    auto my_subtree_root = get_subtree_repartition_root(my_leaf);
 
     /* Get all ranks that have subdomains participating in this limb end */
-    std::vector<int> limb_neighbors;
-    limb_neighbors.reserve(3);
-    for (int r = my_limb_root.pstart(); r < my_limb_root.pend() + 1; ++r) {
-        limb_neighbors.push_back(r);
+    std::vector<int> subtree_neighbors;
+    subtree_neighbors.reserve(3);
+    for (int r = my_subtree_root.pstart(); r < my_subtree_root.pend() + 1; ++r) {
+        subtree_neighbors.push_back(r);
     }
 
-    /* Distribute weights to "limb_neighbors" */
+    /* Distribute weights to "subtree_neighbors" */
 
     // A group of processes participating in a limb is identified by the smallest
     // rank in this limb end.
-    const int limb_group = *std::min_element(limb_neighbors.begin(), limb_neighbors.end());
+    const int subtree_group_id = my_subtree_root.pstart();
     MPI_Comm neighcomm;
-    MPI_Comm_split(comm, limb_group, rank, &neighcomm);
+    MPI_Comm_split(comm, subtree_group_id, rank, &neighcomm);
     util::GlobalVector<double> neighbor_load(neighcomm, cellweights);
 
     // Setup a mapping from ranks relative to "comm" to ranks relative to "neighcomm"
     // Since we chose the rank relative to "comm" as key in MPI_Comm_split,
     // we could also do this manually:
-    // rank_to_neighrank[min(limb_neighbors)] = 0
-    // rank_to_neighrank[max(limb_neighbors)] = limb_neighbors.size() - 1;
+    // rank_to_neighrank[min(subtree_neighbors)] = 0
+    // rank_to_neighrank[max(subtree_neighbors)] = subtree_neighbors.size() - 1;
     // And if it is a limbend of size 3 assign rank "1" to the middle element.
     // But this is less error prone if we ever choose to change the Comm_split.
-    const std::map<int, int> rank_to_neighrank = map_ranks_to_comm(comm, limb_neighbors, neighcomm);
+    const std::map<int, int> rank_to_neighrank = map_ranks_to_comm(comm, subtree_neighbors, neighcomm);
 
     using cell_type = std::array<int, 3>;
-    auto neighbor_load_func = [&old_part, &neighbor_load, &rank_to_neighrank, &limb_neighbors](const cell_type& c){
+    auto neighbor_load_func = [&old_part, &neighbor_load, &rank_to_neighrank, &subtree_neighbors](const cell_type& c){
         auto n = old_part.node_of_cell(c);
 
         // Transform c to process ("rank") local coordinates
@@ -895,7 +911,7 @@ PartTreeStorage& repart_parttree_par_local(PartTreeStorage& s, MPI_Comm comm, co
         const auto i = LinearizeFn(loc_c, loc_box);
 
         // Map rank (relative to "comm") to "neighcomm".
-        assert(std::find(limb_neighbors.begin(), limb_neighbors.end(), n.rank()) != limb_neighbors.end());
+        assert(std::find(subtree_neighbors.begin(), subtree_neighbors.end(), n.rank()) != subtree_neighbors.end());
         const auto rank = rank_to_neighrank.at(n.rank());
 
         assert(neighbor_load.size(rank) > i);
@@ -908,146 +924,13 @@ PartTreeStorage& repart_parttree_par_local(PartTreeStorage& s, MPI_Comm comm, co
         return quality_splitting(codimload(split_dir, lu, ro), nproc, nproc_left);
     };
 
+    const bool is_responsible_process = rank == subtree_group_id;
     /* Re-partition limb ends
      * The process with smallest rank number is responsible for re-creating
      * this limb
      */
-    if (rank == my_limb_root.pstart()) {
-        auto nproc1 = my_limb_root.child1().nproc();
-        auto nproc2 = my_limb_root.child2().nproc();
-
-        // Passing "nproc1" as last parameter ensures that "nproc1" and
-        // "nproc2" do not change.
-        impl::split_node(my_limb_root, splitfunc, nproc1);
-        // Split_node avoids setting "inner", so do it manually
-        // This is also the reason why we use ".nproc()" to distinguish between
-        // nodes and not ".is_inner()"!
-        auto child1 = my_limb_root.child1(), child2 = my_limb_root.child2();
-        child1.inner() = 0;
-        child2.inner() = 0;
-
-        assert(nproc1 == child1.nproc());
-        assert(nproc2 == child2.nproc());
-
-        // In case of a 3-leaf limb split a child
-        if (child1.nproc() > 1) {
-            impl::split_node(child1, splitfunc);
-            assert(child2.nproc() == 1);
-        } else if (child2.nproc() > 1) {
-            impl::split_node(child2, splitfunc);
-            assert(child1.nproc() == 1);
-        } else {
-            assert(limb_neighbors.size() == 2);
-        }
-    }
-
-    /* Invalidate all limb ends
-     * Limb ends are invalidated on all processes not participating as well as on
-     * all participating processes BUT the one that performed the new split
-     */
-    s.walk([my_limb_root, &s, rank](auto node){
-        if (node.is_limbend() && node != my_limb_root && rank != my_limb_root.pstart()) {
-            s.invalidate_subtree(node);
-            // Stop "walk" from descending into nothing
-            node.inner() = 0;
-        }
-    });
-
-    /* Re-distribute all changes
-     * Use an Allreduce operation with MPI_MAX as operation.
-     * This works because we set all fields of all limb ends to "0" above.
-     */
-    std::vector<MPI_Request> reqs{};
-    reqs.reserve(8);
-    s.apply_to_data_vectors([comm, &reqs](auto &vec){
-        using value_type = typename std::remove_reference<decltype(vec)>::type::value_type;
-        reqs.push_back(mpi_helper<value_type>::iallreduce(vec, MPI_MAX, comm));
-    });
-    MPI_Waitall(reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
-
-    MPI_Comm_free(&neighcomm);
-    return s;
-}
-
-template <LinearizeFunc LinearizeFn = linearize>
-PartTreeStorage& repart_parttree_par_local_top(PartTreeStorage& s, MPI_Comm comm, const std::vector<double>& cellweights, int depth)
-{
-    int size;
-    MPI_Comm_size(comm, &size);
-
-    // Nothing to do.
-    if (size == 1)
-        return s;
-
-    PartTreeStorage old_part = s; // Tree corresponding to "cellweights".
-
-    /* Find own limb end */
-    int rank;
-    MPI_Comm_rank(comm, &rank);
-    auto my_leaf = s.node_of_rank(rank);
-    auto my_limb_root = my_leaf.find_root_of_subtree(depth);
-
-    /* Get all ranks that have subdomains participating in this limb end */
-    std::vector<int> limb_neighbors;
-    limb_neighbors.reserve(3);
-    for (int r = my_limb_root.pstart(); r < my_limb_root.pend() + 1; ++r) {
-        limb_neighbors.push_back(r);
-    }
-
-    /* Distribute weights to "limb_neighbors" */
-
-    // A group of processes participating in a limb is identified by the smallest
-    // rank in this limb end.
-    const int limb_group = *std::min_element(limb_neighbors.begin(), limb_neighbors.end());
-    MPI_Comm neighcomm;
-    MPI_Comm_split(comm, limb_group, rank, &neighcomm);
-    util::GlobalVector<double> neighbor_load(neighcomm, cellweights);
-
-    // Setup a mapping from ranks relative to "comm" to ranks relative to "neighcomm"
-    // Since we chose the rank relative to "comm" as key in MPI_Comm_split,
-    // we could also do this manually:
-    // rank_to_neighrank[min(limb_neighbors)] = 0
-    // rank_to_neighrank[max(limb_neighbors)] = limb_neighbors.size() - 1;
-    // And if it is a limbend of size 3 assign rank "1" to the middle element.
-    // But this is less error prone if we ever choose to change the Comm_split.
-    const std::map<int, int> rank_to_neighrank = map_ranks_to_comm(comm, limb_neighbors, neighcomm);
-
-    using cell_type = std::array<int, 3>;
-    auto neighbor_load_func = [&old_part, &neighbor_load, &rank_to_neighrank, &limb_neighbors](const cell_type& c){
-        auto n = old_part.node_of_cell(c);
-
-        // Transform c to process ("rank") local coordinates
-        cell_type loc_c, loc_box;
-        for (auto i = 0; i < 3; ++i) {
-            loc_c[i] = c[i] - n.lu()[i];
-            loc_box[i] = n.ro()[i] - n.lu()[i];
-        }
-
-        const auto i = LinearizeFn(loc_c, loc_box);
-
-        // Map rank (relative to "comm") to "neighcomm".
-        assert(std::find(limb_neighbors.begin(), limb_neighbors.end(), n.rank()) != limb_neighbors.end());
-        const auto rank = rank_to_neighrank.at(n.rank());
-
-        assert(neighbor_load.size(rank) > i);
-        return neighbor_load(rank, i);
-    };
-
-    auto codimload = util::CodimSum<decltype(neighbor_load_func)>(neighbor_load_func);
-
-    auto splitfunc = [&codimload](int split_dir, std::array<int, 3> lu, std::array<int, 3> ro, int nproc, int nproc_left) {
-        return quality_splitting(codimload(split_dir, lu, ro), nproc, nproc_left);
-    };
-
     int new_max_depth = 0;
-    /* Re-partition limb ends
-     * The process with smallest rank number is responsible for re-creating
-     * this limb
-     */
-    if (rank == my_limb_root.pstart() && limb_neighbors.size() > 1) {
-        std::cout << "pre re-split:" << std::endl;
-        std::cout << "child1.nproc " << my_limb_root.child1().nproc() << std::endl;
-        std::cout << "child2.nproc " << my_limb_root.child2().nproc() << std::endl;
+    if (is_responsible_process && subtree_neighbors.size() > 1) {
         s.walk_subtree([&s, &splitfunc, &new_max_depth](auto node) {
             // Need to split the node further?
             if (node.nproc() > 1) {
@@ -1059,23 +942,26 @@ PartTreeStorage& repart_parttree_par_local_top(PartTreeStorage& s, MPI_Comm comm
             } else {
                 new_max_depth = std::max(new_max_depth, node.depth());
             }
-        }, my_limb_root);
-        std::cout << "after re-split:" << std::endl;
-        std::cout << "child1.nproc " << my_limb_root.child1().nproc() << std::endl;
-        std::cout << "child2.nproc " << my_limb_root.child2().nproc() << std::endl;
+        }, my_subtree_root);
     }
 
     /* Invalidate all limb ends
      * Limb ends are invalidated on all processes not participating as well as on
      * all participating processes BUT the one that performed the new split
      */
-    s.walk([my_limb_root, &s, rank, depth](auto node){
-        if (node.depth() == depth) {
-            if (node != my_limb_root || rank != my_limb_root.pstart()) {
+    s.walk_post([my_subtree_root, &s, is_repartition_subtree_root, is_responsible_process](auto node){
+        if (is_repartition_subtree_root(node)) {
+            if (node != my_subtree_root || !is_responsible_process) {
                 s.invalidate_subtree(node);
                 // Stop "walk" from descending into nothing
                 node.inner() = 0;
             }
+            // Don't descend any further. For the limb end version of
+            // repartitioning, subtrees of "node" is_repartitin_subtree_root
+            // can also evaluate to true.
+            return false;
+        } else {
+            return true;
         }
     });
 
@@ -1097,6 +983,53 @@ PartTreeStorage& repart_parttree_par_local_top(PartTreeStorage& s, MPI_Comm comm
 
     MPI_Comm_free(&neighcomm);
     return s;
+}
+
+}
+
+/** Repartitions a kd tree inline by means of local communication of the weights
+ * and local computation of the new splits.
+ *
+ * Repartitioning is done individually in each subtree rooted at the nodes
+ * of depth "depth" in the tree.
+ * In a regular binary tree 2^depth subgroups will be formed that repartition
+ * individually. This makes s.root().nproc() / (1<<depth) many processes per
+ * subgroup that will, internally, communicate their weights.
+ *
+ * @param depth Depth of the tree on which partitioning will be performed in subgroups
+ * @returns Parameter "s"
+ *
+ * @see repart_parttree_par
+ */
+template <LinearizeFunc LinearizeFn = linearize>
+PartTreeStorage& repart_parttree_par_local_top(PartTreeStorage& s, MPI_Comm comm, const std::vector<double>& cellweights, int depth)
+{
+    return _repart_parttree_par_local_impl(s, comm, cellweights, [depth](auto leaf){
+        return leaf.find_root_of_subtree(depth);
+    }, [depth](auto node) {
+        return node.depth() == depth;
+    });
+}
+
+
+/** Repartitions a kd tree inline by means of local communication of the weights
+ * and local computation of the new splits.
+ *
+ * Repartitioning is done between 2 or 3 processes that share the same
+ * level 1 or level 2 subtree.
+ *
+ * @returns Parameter "s"
+ *
+ * @see repart_parttree_par
+ */
+template <LinearizeFunc LinearizeFn = linearize>
+PartTreeStorage& repart_parttree_par_local(PartTreeStorage& s, MPI_Comm comm, const std::vector<double>& cellweights)
+{
+    return _repart_parttree_par_local_impl(s, comm, cellweights, [](auto leaf){
+        return leaf.find_limbend_root();
+    }, [](auto node){
+        return node.is_limbend();
+    });
 }
 
 
