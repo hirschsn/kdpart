@@ -301,6 +301,62 @@ void check_it_local()
     }
 }
 
+void check_it_local_2()
+{
+    std::random_device r;
+    std::default_random_engine rng(r());
+    //std::uniform_int_distribution<int> uniform_dist(50, 500);
+    std::uniform_int_distribution<int> uniform_dist(50, 100);
+
+    const int N = 100;
+    int size, rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    if (rank == 0)
+        std::cout << "[local] Doing " << N << " checks with " << size << " procs." << std::endl;
+
+    for (int i = 0; i < N; ++i) {
+        std::array<int, 3> box = {{uniform_dist(rng), uniform_dist(rng), uniform_dist(rng)}};
+        // Make sure every node has the same box
+        MPI_Bcast(box.data(), 3, MPI_INT, 0, MPI_COMM_WORLD);
+
+        auto t = kdpart::initial_part_par(size, box);
+
+        if (rank == 0)
+            std::cout << "[local] REPART TEST " << i;
+
+        // Get own subdomain size
+        std::array<int, 3> lu, ro;
+        std::tie(lu, ro) = t.subdomain_bounds(rank);
+        int ncells = area(lu, ro);
+
+        // Provide weights for own cells and repartition (reuse int rng).
+        std::vector<double> weights(ncells);
+        std::generate(std::begin(weights), std::end(weights), [&uniform_dist, &rng, rank](){
+            return static_cast<double>(uniform_dist(rng) + 200 * (rank % 2)); // Every other process has more load
+        });
+        double imba_before = imbalance(t, t, size, box, weights);
+        auto old_tree = t;
+        kdpart::repart_parttree_par_local_top(t, MPI_COMM_WORLD, weights, 0);
+        double imba_after = imbalance(old_tree, t, size, box, weights);
+
+        // Check repartitioned tree
+        all_valid_subdomains_check(t, box);
+        all_cells_assigned_check(t, box, size);
+        all_procs_assigned_check(t, size, box);
+        all_procs_have_cells(t, size, box, false); // not partitioned equally w.r.t. no. of cells, so no eq. dist check.
+        all_procs_disjoint(t, size, box);
+        mashall_test(t);
+        // Test for equal partitioning
+        CHECK(imba_after <= imba_before); // Conservative: Tests reduction only
+        CHECK(imba_after < 2.0);
+
+        if (rank == 0)
+            std::cout << " passed. (Imbalance (before/after): " << imba_before << " / " << imba_after << ")" << std::endl;
+        MPI_Barrier(MPI_COMM_WORLD);
+    }
+}
 
 int main(int argc, char **argv)
 {
@@ -309,5 +365,7 @@ int main(int argc, char **argv)
     check_it();
     std::cout << "Checking local repart..." << std::endl;
     check_it_local();
+    std::cout << "Checking local top repart..." << std::endl;
+    check_it_local_2();
     MPI_Finalize();
 }

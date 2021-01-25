@@ -61,6 +61,7 @@ struct NodeAccess {
     inline IntRet pstart() const { return s.pstart[i]; }
     inline IntRet pend() const { return s.pend[i]; }
     inline IntRet psplit() const { return s.psplit[i]; }
+    inline IntRet depth() const { return s.depth[i]; }
 
     inline IntRet rank() const {
         if (is_inner())
@@ -77,13 +78,6 @@ struct NodeAccess {
     inline NodeAccess child2() const { return NodeAccess(s, 2 * i + 2); }
 
     inline bool is_root() const { return i == 0; }
-
-    inline size_t depth() const {
-        size_t d = 0;
-        for (size_t ii = i + 1; ii > 1; ii /= 2)
-            d++;
-        return d;
-    }
 
     inline size_t nproc() const { return s.pend[i] - s.pstart[i] + 1; }
 
@@ -149,8 +143,20 @@ struct NodeAccess {
         assert(false);
     }
 
+    inline NodeAccess find_root_of_subtree(int depth) const
+    {
+        if (this->depth() <= depth)
+            return *this;
+
+        NodeAccess s = *this;
+        while (s.depth() > depth) {
+            s = s.parent();
+        }
+        return s;
+    }
+
     bool operator==(const NodeAccess &other) const {
-        assert(s == other.s); // XXX: ?
+        assert(s == other.s);
         return i == other.i;
     }
 
@@ -258,6 +264,22 @@ struct PartTreeStorage {
         walk([](auto){ return true; }, std::forward<Func>(f), 0);
     }
 
+    /** Applies a function to each node in a subtree in a depth-first traversal.
+     * Function f is being called on the parent node before any of its childs.
+     *
+     * Changing nodes through "f" is explicitly supported. Especially: Children
+     * which are added to a node through "f" are visited by the very same call
+     * to "walk".
+     * Used to initialize the tree (therefore, non-const).
+     *
+     * @param f Void function with a single parameter of type const_node_access_type.
+     * @param n Root node of the subtree
+     */
+    template <typename Func, typename NodeAccess>
+    void walk_subtree(Func &&f, NodeAccess n) {
+        walk([](auto){ return true; }, std::forward<Func>(f), n.i);
+    }
+
     /** Applies a function to each node in the tree in a depth-first traversal.
      * Descends into subtrees only if p(node) is true.
      *
@@ -287,6 +309,17 @@ struct PartTreeStorage {
         apply_to_data_vectors_impl<PartTreeStorage&>(*this, f);
     }
 
+    /** Ensures the tree can hold a fully refined binary tree of depth "new_depth".
+     * Possibly reallocates data. Therefore, this method can throw std::bad_alloc.
+     *
+     * @param new_depth Depth to support after this call.
+     */
+    inline void ensure_depth(size_t new_depth) {
+        size_t new_size = (static_cast<size_t>(1) << (new_depth + 1)) - 1;
+        if (storage_size() < new_size)
+           apply_to_data_vectors([new_size](auto& v){ v.resize(new_size); });
+    }
+
 private:
     // NodeAccess
     friend struct NodeAccess<PartTreeStorage&, int&, point_type&>;
@@ -308,17 +341,6 @@ private:
         return node_access_type(*this, 0);
     }
 
-
-    /** Ensures the tree can hold a fully refined binary tree of depth "new_depth".
-     * Possibly reallocates data. Therefore, this method can throw std::bad_alloc.
-     *
-     * @param new_depth Depth to support after this call.
-     */
-    inline void ensure_depth(size_t new_depth) {
-        size_t new_size = (static_cast<size_t>(1) << (new_depth + 1)) - 1;
-        if (storage_size() < new_size)
-           apply_to_data_vectors([new_size](auto& v){ v.resize(new_size); });
-    }
 
     /** Returns true if this tree holds a node with index i.
      * Precondition: "i" < storage_size(), otherwise UB.
@@ -455,6 +477,7 @@ private:
         f(t.split_direction);
         f(t.split_coord);
         f(t.psplit);
+        f(t.depth);
     }
 
     // The following data [i] are set when the parent, which is (i - 1) / 2,
@@ -469,6 +492,7 @@ private:
     std::vector<int> split_direction; //< direction in which the node i is split if i is not a leaf node
     std::vector<int> split_coord; //< coordinate at which node i is split if i is not a leaf node
     std::vector<int> psplit; //< Splitting boundary of the process range. Processes <= psplit[i] are assigned to the left subtree of node i.
+    std::vector<int> depth; //< Depth of the node.
 };
 
 /** Equality comparison operator for the PartTreeStorage class.
@@ -522,11 +546,13 @@ inline void split_node(NodeAccess& node, SplitFunc split, int _nproc_left = 0)
     node.child1().pend() = node.psplit();
     node.child1().lu() = node.lu();
     node.child1().ro() = middle_ro;
+    node.child1().depth() = node.depth() + 1;
 
     node.child2().pstart() = node.psplit() + 1;
     node.child2().pend() = node.pend();
     node.child2().lu() = middle_lu;
     node.child2().ro() = node.ro();
+    node.child2().depth() = node.depth() + 1;
 }
 
 } // kdpart::impl
@@ -597,6 +623,7 @@ PartTreeStorage make_parttree(int size, std::array<int, 3> lu, std::array<int, 3
     t.root().pend() = size - 1; // Upper bound is included
     t.root().lu() = lu;
     t.root().ro() = ro;
+    t.root().depth() = 0;
 
     t.walk([&t, &splitfunc](auto node) {
         // Need to split the node further?
@@ -803,12 +830,12 @@ struct mpi_helper<std::array<int, 3>>
 
 /** Repartitions a kd tree inline by means of local communication of the weights
  * and local computation of the new splits.
- * 
+ *
  * Repartitioning is done between 2 or 3 processes that share the same
  * level 1 or level 2 subtree.
- * 
+ *
  * @returns Parameter "s"
- * 
+ *
  * @see repart_parttree_par
  */
 template <LinearizeFunc LinearizeFn = linearize>
@@ -930,6 +957,136 @@ PartTreeStorage& repart_parttree_par_local(PartTreeStorage& s, MPI_Comm comm, co
      * Use an Allreduce operation with MPI_MAX as operation.
      * This works because we set all fields of all limb ends to "0" above.
      */
+    std::vector<MPI_Request> reqs{};
+    reqs.reserve(8);
+    s.apply_to_data_vectors([comm, &reqs](auto &vec){
+        using value_type = typename std::remove_reference<decltype(vec)>::type::value_type;
+        reqs.push_back(mpi_helper<value_type>::iallreduce(vec, MPI_MAX, comm));
+    });
+    MPI_Waitall(reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
+
+    MPI_Comm_free(&neighcomm);
+    return s;
+}
+
+template <LinearizeFunc LinearizeFn = linearize>
+PartTreeStorage& repart_parttree_par_local_top(PartTreeStorage& s, MPI_Comm comm, const std::vector<double>& cellweights, int depth)
+{
+    int size;
+    MPI_Comm_size(comm, &size);
+
+    // Nothing to do.
+    if (size == 1)
+        return s;
+
+    PartTreeStorage old_part = s; // Tree corresponding to "cellweights".
+
+    /* Find own limb end */
+    int rank;
+    MPI_Comm_rank(comm, &rank);
+    auto my_leaf = s.node_of_rank(rank);
+    auto my_limb_root = my_leaf.find_root_of_subtree(depth);
+
+    /* Get all ranks that have subdomains participating in this limb end */
+    std::vector<int> limb_neighbors;
+    limb_neighbors.reserve(3);
+    for (int r = my_limb_root.pstart(); r < my_limb_root.pend() + 1; ++r) {
+        limb_neighbors.push_back(r);
+    }
+
+    /* Distribute weights to "limb_neighbors" */
+
+    // A group of processes participating in a limb is identified by the smallest
+    // rank in this limb end.
+    const int limb_group = *std::min_element(limb_neighbors.begin(), limb_neighbors.end());
+    MPI_Comm neighcomm;
+    MPI_Comm_split(comm, limb_group, rank, &neighcomm);
+    util::GlobalVector<double> neighbor_load(neighcomm, cellweights);
+
+    // Setup a mapping from ranks relative to "comm" to ranks relative to "neighcomm"
+    // Since we chose the rank relative to "comm" as key in MPI_Comm_split,
+    // we could also do this manually:
+    // rank_to_neighrank[min(limb_neighbors)] = 0
+    // rank_to_neighrank[max(limb_neighbors)] = limb_neighbors.size() - 1;
+    // And if it is a limbend of size 3 assign rank "1" to the middle element.
+    // But this is less error prone if we ever choose to change the Comm_split.
+    const std::map<int, int> rank_to_neighrank = map_ranks_to_comm(comm, limb_neighbors, neighcomm);
+
+    using cell_type = std::array<int, 3>;
+    auto neighbor_load_func = [&old_part, &neighbor_load, &rank_to_neighrank, &limb_neighbors](const cell_type& c){
+        auto n = old_part.node_of_cell(c);
+
+        // Transform c to process ("rank") local coordinates
+        cell_type loc_c, loc_box;
+        for (auto i = 0; i < 3; ++i) {
+            loc_c[i] = c[i] - n.lu()[i];
+            loc_box[i] = n.ro()[i] - n.lu()[i];
+        }
+
+        const auto i = LinearizeFn(loc_c, loc_box);
+
+        // Map rank (relative to "comm") to "neighcomm".
+        assert(std::find(limb_neighbors.begin(), limb_neighbors.end(), n.rank()) != limb_neighbors.end());
+        const auto rank = rank_to_neighrank.at(n.rank());
+
+        assert(neighbor_load.size(rank) > i);
+        return neighbor_load(rank, i);
+    };
+
+    auto codimload = util::CodimSum<decltype(neighbor_load_func)>(neighbor_load_func);
+
+    auto splitfunc = [&codimload](int split_dir, std::array<int, 3> lu, std::array<int, 3> ro, int nproc, int nproc_left) {
+        return quality_splitting(codimload(split_dir, lu, ro), nproc, nproc_left);
+    };
+
+    int new_max_depth = 0;
+    /* Re-partition limb ends
+     * The process with smallest rank number is responsible for re-creating
+     * this limb
+     */
+    if (rank == my_limb_root.pstart() && limb_neighbors.size() > 1) {
+        std::cout << "pre re-split:" << std::endl;
+        std::cout << "child1.nproc " << my_limb_root.child1().nproc() << std::endl;
+        std::cout << "child2.nproc " << my_limb_root.child2().nproc() << std::endl;
+        s.walk_subtree([&s, &splitfunc, &new_max_depth](auto node) {
+            // Need to split the node further?
+            if (node.nproc() > 1) {
+                s.ensure_depth(node.depth() + 1);
+                // Reset split state of possibly already existing children
+                node.child1().inner() = 0;
+                node.child2().inner() = 0;
+                impl::split_node(node, splitfunc);
+            } else {
+                new_max_depth = std::max(new_max_depth, node.depth());
+            }
+        }, my_limb_root);
+        std::cout << "after re-split:" << std::endl;
+        std::cout << "child1.nproc " << my_limb_root.child1().nproc() << std::endl;
+        std::cout << "child2.nproc " << my_limb_root.child2().nproc() << std::endl;
+    }
+
+    /* Invalidate all limb ends
+     * Limb ends are invalidated on all processes not participating as well as on
+     * all participating processes BUT the one that performed the new split
+     */
+    s.walk([my_limb_root, &s, rank, depth](auto node){
+        if (node.depth() == depth) {
+            if (node != my_limb_root || rank != my_limb_root.pstart()) {
+                s.invalidate_subtree(node);
+                // Stop "walk" from descending into nothing
+                node.inner() = 0;
+            }
+        }
+    });
+
+    /* Re-distribute all changes
+     * Use an Allreduce operation with MPI_MAX as operation.
+     * This works because we set all fields of all limb ends to "0" above.
+     */
+    // We might have changed the max depth by allowing different splits.
+    MPI_Allreduce(MPI_IN_PLACE, &new_max_depth, 1, MPI_INT, MPI_MAX, comm);
+    s.ensure_depth(new_max_depth);
+
     std::vector<MPI_Request> reqs{};
     reqs.reserve(8);
     s.apply_to_data_vectors([comm, &reqs](auto &vec){
