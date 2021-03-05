@@ -931,6 +931,8 @@ PartTreeStorage& _repart_parttree_par_local_impl(PartTreeStorage& s, MPI_Comm co
      */
     int new_max_depth = 0;
     if (is_responsible_process && subtree_neighbors.size() > 1) {
+        s.invalidate_subtree(my_subtree_root.child1());
+        s.invalidate_subtree(my_subtree_root.child2());
         s.walk_subtree([&s, &splitfunc, &new_max_depth](auto node) {
             // Need to split the node further?
             if (node.nproc() > 1) {
